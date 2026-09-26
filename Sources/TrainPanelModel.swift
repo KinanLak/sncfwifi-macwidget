@@ -159,6 +159,22 @@ enum PanelState {
     case connected(TrainViewState)
 }
 
+enum MACRotationState {
+    case idle
+    case running
+    case changed(from: String, to: String)
+    case observed(String)
+    case pending
+    case failed(String)
+}
+
+enum PortalConnectionState {
+    case idle
+    case connecting
+    case connected
+    case failed(String)
+}
+
 /// Source d'observation pour la vue SwiftUI. Le `MenuBarController` pousse l'état
 /// et branche les closures d'action.
 final class TrainStore: ObservableObject {
@@ -167,6 +183,8 @@ final class TrainStore: ObservableObject {
     @Published var lastRefreshDate: Date?
     @Published var route: PanelRoute = .main
     @Published var menu: MenuState = .idle
+    @Published var macRotation: MACRotationState = .idle
+    @Published var portalConnection: PortalConnectionState = .idle
     /// Doit refléter le Timer du contrôleur.
     let refreshInterval: TimeInterval = 30
 
@@ -185,4 +203,9 @@ final class TrainStore: ObservableObject {
     var onCloseMenu: () -> Void = {}
     /// Appelée quand un réglage de notification change (pour relancer un refresh).
     var onSettingsChanged: () -> Void = {}
+    /// Redessine immédiatement la pastille quand son mode d'affichage change.
+    var onStatusBarSettingsChanged: () -> Void = {}
+    var onRotateMAC: () -> Void = {}
+    var onVerifyMAC: () -> Void = {}
+    var onOpenConnectionLog: () -> Void = {}
 }

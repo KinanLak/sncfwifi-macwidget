@@ -631,29 +631,100 @@ private struct FooterView: View {
     @AppStorage("notifyBeforeArrivalMinutes") private var notifyMinutes = 10
     @AppStorage("notifyBeforeArrivalTarget") private var notifyTarget = "selectedArrival"
     @AppStorage("notifyPlatformChangeEnabled") private var notifyPlatform = true
+    @AppStorage("showPeriodicDelayInMenuBar") private var showPeriodicDelayInMenuBar = false
     @AppStorage("isDemoMode") private var demoMode = false
     @AppStorage("demoOperator") private var demoProvider = "sncf"
 
     private let leadTimes = [5, 10, 15]
 
     var body: some View {
-        HStack(spacing: 4) {
-            footerButton("arrow.2.circlepath", help: "Actualiser") { store.onRefresh() }
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                footerButton("arrow.2.circlepath", help: "Actualiser") { store.onRefresh() }
 
-            if showsMenuButton {
-                footerButton("fork.knife", help: "Bar-restaurant") { store.onOpenMenu() }
+                if showsMenuButton {
+                    footerButton("fork.knife", help: "Bar-restaurant") { store.onOpenMenu() }
+                }
+
+                settingsMenu
+                debugMenu
+
+                Button { store.onRotateMAC() } label: {
+                    if case .running = store.macRotation {
+                        ProgressView().controlSize(.small).frame(width: 26, height: 24)
+                    } else {
+                        Image(systemName: "shuffle")
+                            .font(.system(size: 14))
+                            .frame(width: 26, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isRotatingMAC)
+                .help("Changer la MAC Wi-Fi (en0) · reconnexion automatique au portail SNCF")
+
+                Spacer()
+
+                footerButton("info.circle", help: "À propos") { store.onOpenAbout() }
+                footerButton("power", help: "Quitter") { store.onQuit() }
             }
 
-            settingsMenu
-            debugMenu
-
-            Spacer()
-
-            footerButton("info.circle", help: "À propos") { store.onOpenAbout() }
-            footerButton("power", help: "Quitter") { store.onQuit() }
+            if let message = macRotationMessage {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundColor(macRotationFailed ? .red : .secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            }
+            if case .pending = store.macRotation {
+                Button("Vérifier la MAC") { store.onVerifyMAC() }
+                    .font(.system(size: 11))
+            }
+            if let message = portalMessage {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundColor(portalFailed ? .orange : .secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private var isRotatingMAC: Bool {
+        if case .running = store.macRotation { return true }
+        return false
+    }
+
+    private var portalFailed: Bool {
+        if case .failed = store.portalConnection { return true }
+        return false
+    }
+
+    private var portalMessage: String? {
+        switch store.portalConnection {
+        case .idle: return nil
+        case .connecting: return "Reconnexion SNCF et autorisation Internet en cours…"
+        case .connected: return "Wi-Fi SNCF : accès Internet confirmé"
+        case .failed(let message): return message
+        }
+    }
+
+    private var macRotationFailed: Bool {
+        if case .failed = store.macRotation { return true }
+        return false
+    }
+
+    private var macRotationMessage: String? {
+        switch store.macRotation {
+        case .idle: return nil
+        case .running: return "Opération MAC en cours…"
+        case .changed(let before, let after): return "MAC en0 : \(before) → \(after)"
+        case .observed(let after): return "MAC en0 après rotation : \(after) (ancienne adresse indisponible)"
+        case .pending: return "Commande exécutée. Vérification en attente — reconnectez le Wi-Fi, puis rouvrez le panneau."
+        case .failed(let message): return message
+        }
     }
 
     private var connectedState: TrainViewState? {
@@ -679,6 +750,14 @@ private struct FooterView: View {
 
     private var settingsMenu: some View {
         Menu {
+            Button {
+                showPeriodicDelayInMenuBar.toggle()
+                store.onStatusBarSettingsChanged()
+            } label: {
+                checkLabel("Afficher périodiquement le retard", on: showPeriodicDelayInMenuBar)
+            }
+            Divider()
+
             if let arrival = arrival {
                 Menu("Gare d'arrivée") {
                     ForEach(arrival.options) { option in
@@ -762,6 +841,7 @@ private struct FooterView: View {
                 }
             }
             Button("Ouvrir le panneau démo") { store.onOpenDemoPanel() }
+            Button("Ouvrir les logs de connexion") { store.onOpenConnectionLog() }
             Divider()
             Button {
                 store.onCopyJSON()

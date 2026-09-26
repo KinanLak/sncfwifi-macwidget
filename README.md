@@ -18,8 +18,8 @@ qui est disponible dans chaque train.
 ## Le widget 🖥️
 
 **Pastille** — prochain arrêt et temps restant avec une jauge de progression (`Berlin · 3h18`), ou
-`En gare de Lyon` à l'arrêt. Le retard, quand le réseau le donne, s'y intercale 5 s
-(`⚠ +12min · Régulation du trafic`). Sans desserte, elle affiche la vitesse
+`En gare de Lyon` à l'arrêt. Par défaut, cet affichage reste fixe. Une option permet d'y intercaler
+le retard pendant 5 s quand le réseau le donne (`⚠ +12min · Régulation du trafic`). Sans desserte, elle affiche la vitesse
 (`Eurostar · 278 km/h`) et n'a pas de jauge. Sa largeur est plafonnée, avec troncature, pour
 rester lisible quand la barre de menus est pleine.
 
@@ -27,8 +27,9 @@ rester lisible quand la barre de menus est pleine.
 horaires théoriques barrés en cas de retard ; puis les métriques propres au réseau. Un second
 écran affiche la carte du bar quand le réseau la publie.
 
-**Réglages** — gare d'arrivée de référence (elle pilote l'ETA et la progression), notification
-système 5 / 10 / 15 min avant l'arrivée, notification de changement de voie.
+**Réglages** — affichage périodique du retard dans la barre (désactivé par défaut), gare d'arrivée
+de référence (elle pilote l'ETA et la progression), notification système 5 / 10 / 15 min avant
+l'arrivée, notification de changement de voie.
 
 ---
 
@@ -260,6 +261,45 @@ brew reinstall --cask sncfwifi
 - macOS 11 (Big Sur) ou plus récent — Apple Silicon et Intel (binaire universel)
 - Connexion au WiFi d'un train pris en charge (SNCF, Eurostar ou ICE) pour que l'API réponde
 - *(pour compiler)* Xcode Command Line Tools (`xcode-select --install`)
+
+### Changer l’adresse MAC Wi-Fi
+
+Le bouton **aux flèches croisées (rotation MAC)** du pied de panneau lance `spoofy randomize en0` après
+confirmation administrateur de macOS. Installez d’abord Node.js et
+[`spoofy`](https://github.com/basedbytes/spoofy) (`npm install -g spoofy`) ;
+l’app reconnaît aussi une installation dans `~/.bun/bin`. Elle compare l’adresse
+effective de `en0` avant et après avec `spoofy list --wifi` et affiche le résultat ou
+l’erreur dans le panneau. Les lectures et la rotation utilisent la même autorisation
+administrateur : macOS peut masquer la MAC effective aux processus lancés par une app
+non privilégiée (valeur `02:00:00:00:00:00`). Si la lecture reste indéterminée,
+la vérification reprend à la réouverture du panneau ou avec **Vérifier la MAC**,
+sans nouvelle rotation. Le Wi-Fi se déconnecte brièvement et peut nécessiter
+une reconnexion. Cette action cible uniquement `en0` (Wi-Fi sur la plupart des Mac).
+
+Sur le réseau **SNCF**, le même bouton enchaîne automatiquement la reconnexion :
+
+1. Prise en charge temporaire des réseaux SNCF via `CNSetSupportedSSIDs`,
+   pour supprimer la fenêtre native de l'assistant captif avant la rotation.
+2. Rotation et vérification de la MAC, puis réassociation au Wi-Fi si nécessaire.
+3. Si la MAC n'a aucune session (404 JSON du routeur), création via
+   `POST /router/api/connection/activate/auto` (`without21NetConnection: false`).
+   Puis `POST /router/api/connection/modify` (`serviceClass: 5`) et
+   `POST /router/api/connection/registry` (profil public observé dans le portail).
+4. Vérification de la classe de service et d'une réponse HTTPS sur Internet.
+5. Signalement de la connexion à macOS (`CNMarkPortalOnline`) et libération
+   de la prise en charge du portail, y compris si une étape échoue.
+
+Les lectures et l'autorisation utilisent une session neuve ; les cookies des HAR
+ne sont pas réutilisés. La suppression du portail est limitée aux SSID SNCF,
+pendant cette opération ; l'inscription disparaît aussi si le helper s'arrête.
+Les autres réseaux gardent la rotation
+MAC seule. Un résultat distinct indique si l'accès Internet est confirmé.
+
+**Diagnostic :** le menu Debug → **Ouvrir les logs de connexion** ouvre
+`~/Library/Logs/SNCFWifi/connection.log`. Chaque opération y ajoute ses étapes,
+codes HTTP et erreurs à la fin du helper ; les mêmes événements sont disponibles
+en direct dans le journal système (sous-système `fr.sncf.wifi-widget`, catégorie
+`Connection`). Les cookies et identifiants de session ne sont pas enregistrés.
 
 ---
 

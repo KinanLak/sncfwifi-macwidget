@@ -14,6 +14,7 @@ final class MenuBarController: NSObject {
     private var lastRawData: [String: Any]?
 
     private let store = TrainStore()
+    private let macAddressClient = MACAddressClient()
     private let popover = NSPopover()
     private lazy var panelHost = NSHostingController(rootView: AnyView(TrainPanelView().environmentObject(store)))
 
@@ -56,6 +57,7 @@ final class MenuBarController: NSObject {
     private let lastArrivalNotificationStopIdKey = "lastArrivalNotificationStopId"
     private let notifyPlatformChangeEnabledKey = "notifyPlatformChangeEnabled"
     private let lastPlatformNotificationKey = "lastPlatformNotification"
+    private let showPeriodicDelayInMenuBarKey = "showPeriodicDelayInMenuBar"
     private let allowedNotificationLeadTimes = [5, 10, 15]
 
     private enum ArrivalNotificationTarget: String {
@@ -72,7 +74,7 @@ final class MenuBarController: NSObject {
         locationManager.delegate = self
         requestSSIDAuthorizationIfNeeded()
 
-        registerNotificationDefaults()
+        registerDefaults()
         notificationCenter.requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         statusItem.button?.image = NSImage(systemSymbolName: "tram.fill", accessibilityDescription: "Train")
@@ -111,6 +113,7 @@ final class MenuBarController: NSObject {
             // de l'utilisateur qui vient de monter dans le train.
             self?.nonTrainSSIDs.removeAll()
             self?.refresh()
+            self?.verifyPendingMAC()
         }
         store.onQuit = { NSApp.terminate(nil) }
         store.onSelectArrival = { [weak self] stopId in
@@ -136,6 +139,61 @@ final class MenuBarController: NSObject {
             self?.lastArrivalNotifiedStopId = nil
             self?.refresh()
         }
+        store.onStatusBarSettingsChanged = { [weak self] in self?.redrawTitle() }
+        store.onRotateMAC = { [weak self] in self?.rotateMAC() }
+        store.onVerifyMAC = { [weak self] in self?.verifyPendingMAC() }
+        store.onOpenConnectionLog = {
+            ConnectionLog.append(["\(ISO8601DateFormatter().string(from: Date())) Ouverture du journal"])
+            NSWorkspace.shared.open(ConnectionLog.fileURL)
+        }
+    }
+
+    private func rotateMAC() {
+        if case .running = store.macRotation { return }
+        store.macRotation = .running
+        DispatchQueue.main.async { [weak self] in self?.sizePopoverToContent() }
+        if activeSource?.descriptor.id == "sncf", !MockTrainData.shared.isEnabled {
+            store.portalConnection = .connecting
+            let ssid = CWWiFiClient.shared().interface(withName: "en0")?.ssid()
+            macAddressClient.rotateAndConnect(ssid: ssid) { [weak self] result, report in
+                guard let self else { return }
+                if let error = report.error {
+                    self.store.portalConnection = .failed(error)
+                } else {
+                    self.store.portalConnection = report.connected ? .connected : .failed("Connexion non confirmée.")
+                }
+                self.publishMACResult(result)
+            }
+            return
+        }
+        store.portalConnection = .idle
+        macAddressClient.rotate { [weak self] result in
+            self?.publishMACResult(result)
+        }
+    }
+
+    private func verifyPendingMAC() {
+        guard case .pending = store.macRotation else { return }
+        store.macRotation = .running
+        macAddressClient.verify { [weak self] result in self?.publishMACResult(result) }
+    }
+
+    private func publishMACResult(_ result: MACAddressClient.Result) {
+        switch result {
+        case .changed(let before, let after):
+            store.macRotation = .changed(from: before, to: after)
+            forgetDetectedProvider()
+            refresh()
+        case .observed(let after):
+            store.macRotation = .observed(after)
+            forgetDetectedProvider()
+            refresh()
+        case .pending:
+            store.macRotation = .pending
+        case .failed(let message):
+            store.macRotation = .failed(message)
+        }
+        DispatchQueue.main.async { [weak self] in self?.sizePopoverToContent() }
     }
 
     @objc private func togglePopover() {
@@ -143,6 +201,7 @@ final class MenuBarController: NSObject {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            verifyPendingMAC()
             sizePopoverToContent()
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
@@ -170,7 +229,8 @@ final class MenuBarController: NSObject {
 
     @objc private func redrawTitle() {
         guard let badge else { return }
-        if let delayTitle = badge.delayTitle {
+        if UserDefaults.standard.bool(forKey: showPeriodicDelayInMenuBarKey),
+           let delayTitle = badge.delayTitle {
             // Le retard s'affiche 5 s, puis on repasse au texte normal.
             applyTitleImage(text: delayTitle, progress: badge.progress)
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
@@ -548,12 +608,13 @@ final class MenuBarController: NSObject {
         return target
     }
 
-    private func registerNotificationDefaults() {
+    private func registerDefaults() {
         UserDefaults.standard.register(defaults: [
             notifyBeforeArrivalEnabledKey: true,
             notifyBeforeArrivalMinutesKey: 10,
             notifyBeforeArrivalTargetKey: ArrivalNotificationTarget.selectedArrival.rawValue,
-            notifyPlatformChangeEnabledKey: true
+            notifyPlatformChangeEnabledKey: true,
+            showPeriodicDelayInMenuBarKey: false
         ])
     }
 
